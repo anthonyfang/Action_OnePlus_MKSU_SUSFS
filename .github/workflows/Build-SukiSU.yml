@@ -86,19 +86,24 @@ jobs:
           export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      - name: Apply Patches SukiSU Ultra (best effort, never fails)
+      - name: Apply Patches SukiSU Ultra (tarball, best effort)
         run: |
           set +e
           cd kernel_workspace
-          echo "== clone susfs4ksu (gitlab, с timeout) =="
-          timeout 300 git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-5.15 ||             timeout 300 git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
-          echo "== clone SukiSU_patch (github) =="
-          timeout 300 git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+          echo "== fetch susfs4ksu via gitlab archive (no git protocol) =="
+          timeout 300 curl -fL --retry 2 --max-time 280 -o susfs.tar.gz             "https://gitlab.com/simonpunk/susfs4ksu/-/archive/gki-android14-5.15/susfs4ksu-gki-android14-5.15.tar.gz"
+          if [ -s susfs.tar.gz ] && tar tzf susfs.tar.gz >/dev/null 2>&1; then
+            tar xzf susfs.tar.gz && mv -f susfs4ksu-gki-android14-5.15 susfs4ksu && echo "susfs4ksu OK"
+          else
+            echo "susfs archive failed; trying github mirror"
+            timeout 240 curl -fL --retry 2 --max-time 220 -o susfs2.tar.gz               "https://github.com/simonpunk/susfs4ksu/archive/refs/heads/gki-android14-5.15.tar.gz"               && tar xzf susfs2.tar.gz && mv -f susfs4ksu-gki-android14-5.15 susfs4ksu && echo "susfs4ksu via github OK"
+          fi
+          echo "== fetch SukiSU_patch via github archive =="
+          timeout 240 curl -fL --retry 2 --max-time 220 -o sukisu_patch.tar.gz             "https://github.com/ShirkNeko/SukiSU_patch/archive/refs/heads/main.tar.gz"             && tar xzf sukisu_patch.tar.gz && mv -f SukiSU_patch-main SukiSU_patch && echo "SukiSU_patch OK"
           ls -d susfs4ksu SukiSU_patch 2>/dev/null
           cd kernel_platform
           if [ -d ../susfs4ksu/kernel_patches ]; then
-            echo "== patch files available =="
-            ls ../susfs4ksu/kernel_patches | head -20
+            ls ../susfs4ksu/kernel_patches
             cp ../susfs4ksu/kernel_patches/*.patch ./common/ 2>/dev/null || true
             cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
             cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
@@ -106,10 +111,10 @@ jobs:
             for pf in 50_add_susfs*.patch; do
               [ -f "$pf" ] || continue
               echo "== applying $pf =="
-              patch -p1 < "$pf" || echo "susfs patch failed, continuing without SUSFS"
+              patch -p1 < "$pf" && echo "SUSFS patch applied" || echo "SUSFS patch failed -> building without SUSFS"
             done
           else
-            echo "susfs4ksu not fetched -> building WITHOUT SUSFS (KSU still enabled)"
+            echo "susfs4ksu missing -> building WITHOUT SUSFS (KSU still enabled)"
           fi
           exit 0
 
