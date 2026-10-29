@@ -86,45 +86,45 @@ jobs:
           export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      - name: Apply Patches SukiSU Ultra
+      - name: Apply Patches SukiSU Ultra (best effort, never fails)
         run: |
+          set +e
           cd kernel_workspace
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-5.15 || git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
-          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          echo "== clone susfs4ksu (gitlab, с timeout) =="
+          timeout 300 git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-5.15 ||             timeout 300 git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+          echo "== clone SukiSU_patch (github) =="
+          timeout 300 git clone --depth=1 https://github.com/ShirkNeko/SukiSU_patch.git
+          ls -d susfs4ksu SukiSU_patch 2>/dev/null
           cd kernel_platform
-          echo "正在给内核打susfs补丁"
-          cp ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-5.15.patch ./common/
-          cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
-
-          if [ "false" = "true" ]; then
-          echo "正在给内核打zram补丁"
-          cp -r ../SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux
-          cp -r ../SukiSU_patch/other/zram/lz4k/lib/* ./common/lib
-          cp -r ../SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto
-          cp -r ../SukiSU_patch/other/zram/lz4k_oplus ./common/lib/
+          if [ -d ../susfs4ksu/kernel_patches ]; then
+            echo "== patch files available =="
+            ls ../susfs4ksu/kernel_patches | head -20
+            cp ../susfs4ksu/kernel_patches/*.patch ./common/ 2>/dev/null || true
+            cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
+            cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
+            cd ./common
+            for pf in 50_add_susfs*.patch; do
+              [ -f "$pf" ] || continue
+              echo "== applying $pf =="
+              patch -p1 < "$pf" || echo "susfs patch failed, continuing without SUSFS"
+            done
+          else
+            echo "susfs4ksu not fetched -> building WITHOUT SUSFS (KSU still enabled)"
           fi
+          exit 0
 
-          cd ./common
-          patch -p1 < 50_add_susfs_in_gki-android14-5.15.patch || true
-          echo "完成"
-
-      - name: Apply Hide Stuff Patches
+      - name: Apply Hide Stuff Patches (best effort)
         run: |
+          set +e
           cd kernel_workspace/kernel_platform/common
-          cp ../../SukiSU_patch/69_hide_stuff.patch ./
-          echo "正在打隐藏应用补丁"
-          patch -p1 -F 3 < 69_hide_stuff.patch
-
-      - name: Apply LZ4KD
-        run: |
-          cd kernel_workspace/kernel_platform/common
-          if [ "false" = "true" ]; then
-            cp ../../SukiSU_patch/other/zram/zram_patch/5.15/lz4kd.patch ./
-            echo "正在打lz4kd补丁"
-            patch -p1 -F 3 < lz4kd.patch || true
-            echo '完成LZ4KD补丁'
+          if [ -f ../../SukiSU_patch/69_hide_stuff.patch ]; then
+            cp ../../SukiSU_patch/69_hide_stuff.patch ./
+            echo "applying 69_hide_stuff.patch"
+            patch -p1 -F 3 < 69_hide_stuff.patch || echo "hide_stuff patch failed, continuing"
+          else
+            echo "69_hide_stuff.patch not found -> skip"
           fi
+          exit 0
 
       # 配置信息
       - name: Add Configuration Settings
@@ -292,30 +292,22 @@ jobs:
           cp Image $GITHUB_WORKSPACE/AnyKernel3/Image
 
       # 下载 SUSFS 模块（CI）
-      - name: Download Latest SUSFS Module from CI
-        if: ${{ true }}
+      - name: Download SUSFS module (best effort)
         run: |
-          LATEST_RUN_ID=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | \
-            jq -r '.workflow_runs[] | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
-
-          if [ -z "$LATEST_RUN_ID" ]; then
-            echo "No successful run found for branch v1.5.2+"
-            exit 1
+          set +e
+          LATEST_RUN_ID=$(curl -s --max-time 45 "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs?status=success" | jq -r '.workflow_runs[]? | select(.head_branch == "v1.5.2+") | .id' | head -n 1)
+          echo "latest run id: $LATEST_RUN_ID"
+          if [ -n "$LATEST_RUN_ID" ] && [ "$LATEST_RUN_ID" != "null" ]; then
+            ARTIFACT_URL=$(curl -s --max-time 45 "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url // empty')
+            if [ -n "$ARTIFACT_URL" ]; then
+              curl -L --max-time 120 -o ksu_module_susfs.zip "$ARTIFACT_URL" && cp ksu_module_susfs.zip ./AnyKernel3/ && echo "module from CI"
+            fi
           fi
-
-          ARTIFACT_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/sidex15/susfs4ksu-module/actions/runs/$LATEST_RUN_ID/artifacts" | jq -r '.artifacts[0].archive_download_url')
-
-          curl -L -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -o ksu_module_susfs.zip "$ARTIFACT_URL"
-          cp ksu_module_susfs.zip ./AnyKernel3/
-
-      # 下载 SUSFS 模块（Release）
-      - name: Download Latest SUSFS Module from Release
-        if: ${{ false }}
-        run: |
-          wget https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip
-          cp ksu_module_susfs_1.5.2+.zip ./AnyKernel3/
+          if [ ! -f ./AnyKernel3/ksu_module_susfs.zip ]; then
+            wget -q --timeout=60 "https://github.com/sidex15/ksu_module_susfs/releases/latest/download/ksu_module_susfs_1.5.2+.zip" -O ksu_module_susfs.zip               && cp ksu_module_susfs.zip ./AnyKernel3/ && echo "module from release"
+          fi
+          ls -l ./AnyKernel3/ | head
+          exit 0
 
       - name: Set suffix
         id: suffix
