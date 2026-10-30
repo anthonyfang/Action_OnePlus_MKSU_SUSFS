@@ -2,6 +2,9 @@ name: Build OnePlus_SukiSU Ultra All
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -86,49 +89,17 @@ jobs:
           export KSU_VERSION=$KSU_VERSION
           sed -i "s/DKSU_VERSION=12800/DKSU_VERSION=${KSU_VERSION}/" kernel/Makefile
 
-      - name: Apply Patches SukiSU Ultra (tarball, best effort)
+      - name: Fetch SUSFS patches (reference only, NOT applied)
         run: |
           set +e
           cd kernel_workspace
-          echo "== fetch susfs4ksu via gitlab archive (no git protocol) =="
-          timeout 300 curl -fL --retry 2 --max-time 280 -o susfs.tar.gz             "https://gitlab.com/simonpunk/susfs4ksu/-/archive/gki-android14-5.15/susfs4ksu-gki-android14-5.15.tar.gz"
-          if [ -s susfs.tar.gz ] && tar tzf susfs.tar.gz >/dev/null 2>&1; then
-            tar xzf susfs.tar.gz && mv -f susfs4ksu-gki-android14-5.15 susfs4ksu && echo "susfs4ksu OK"
-          else
-            echo "susfs archive failed; trying github mirror"
-            timeout 240 curl -fL --retry 2 --max-time 220 -o susfs2.tar.gz               "https://github.com/simonpunk/susfs4ksu/archive/refs/heads/gki-android14-5.15.tar.gz"               && tar xzf susfs2.tar.gz && mv -f susfs4ksu-gki-android14-5.15 susfs4ksu && echo "susfs4ksu via github OK"
-          fi
-          echo "== fetch SukiSU_patch via github archive =="
-          timeout 240 curl -fL --retry 2 --max-time 220 -o sukisu_patch.tar.gz             "https://github.com/ShirkNeko/SukiSU_patch/archive/refs/heads/main.tar.gz"             && tar xzf sukisu_patch.tar.gz && mv -f SukiSU_patch-main SukiSU_patch && echo "SukiSU_patch OK"
+          echo "SUSFS 未应用：gki-android14-5.15 的补丁在 COS16 5.15 树上打不干净（已验证 SUSFS_IS_INODE_SUS_MAP 未定义、task_mmu.c 编译失败）"
+          timeout 200 curl -fL --retry 1 --max-time 180 -o susfs.tar.gz             "https://gitlab.com/simonpunk/susfs4ksu/-/archive/gki-android14-5.15/susfs4ksu-gki-android14-5.15.tar.gz" || true
+          [ -s susfs.tar.gz ] && tar xzf susfs.tar.gz && mv -f susfs4ksu-gki-android14-5.15 susfs4ksu || true
+          timeout 200 curl -fL --retry 1 --max-time 180 -o sukisu_patch.tar.gz             "https://github.com/ShirkNeko/SukiSU_patch/archive/refs/heads/main.tar.gz" || true
+          [ -s sukisu_patch.tar.gz ] && tar xzf sukisu_patch.tar.gz && mv -f SukiSU_patch-main SukiSU_patch || true
           ls -d susfs4ksu SukiSU_patch 2>/dev/null
-          cd kernel_platform
-          if [ -d ../susfs4ksu/kernel_patches ]; then
-            ls ../susfs4ksu/kernel_patches
-            cp ../susfs4ksu/kernel_patches/*.patch ./common/ 2>/dev/null || true
-            cp ../susfs4ksu/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
-            cp ../susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
-            cd ./common
-            for pf in 50_add_susfs*.patch; do
-              [ -f "$pf" ] || continue
-              echo "== applying $pf =="
-              patch -p1 < "$pf" && echo "SUSFS patch applied" || echo "SUSFS patch failed -> building without SUSFS"
-            done
-          else
-            echo "susfs4ksu missing -> building WITHOUT SUSFS (KSU still enabled)"
-          fi
-          exit 0
-
-      - name: Apply Hide Stuff Patches (best effort)
-        run: |
-          set +e
-          cd kernel_workspace/kernel_platform/common
-          if [ -f ../../SukiSU_patch/69_hide_stuff.patch ]; then
-            cp ../../SukiSU_patch/69_hide_stuff.patch ./
-            echo "applying 69_hide_stuff.patch"
-            patch -p1 -F 3 < 69_hide_stuff.patch || echo "hide_stuff patch failed, continuing"
-          else
-            echo "69_hide_stuff.patch not found -> skip"
-          fi
+          echo "KSU(builtin) 已由 setup.sh 注入，内核将以「有 KSU、无 SUSFS」构建"
           exit 0
 
       # 配置信息
@@ -143,21 +114,6 @@ jobs:
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
 
           # SUSFS config
-          echo "CONFIG_KSU_SUSFS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> "$CONFIG_FILE"
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> "$CONFIG_FILE"
 
           # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
@@ -224,37 +180,69 @@ jobs:
         if: ${{ true }}
         run: |
          cd kernel_workspace
+         set +e
          LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh kalama gki
+         echo "build script exit: $?"
+         echo "== looking for the built kernel =="
+         find . -type f -name "Image*" 2>/dev/null | head -20
+         IMG=$(find . -type f -name "Image" -size +2M 2>/dev/null | head -1)
+         if [ -z "$IMG" ]; then
+           echo "!! kernel build produced no Image (see errors above) - failing the job"
+           exit 1
+         fi
+         echo "built kernel: $IMG ($(stat -c%s "$IMG") bytes)"
+         exit 0
 
-      - name: Make AnyKernel3 (path agnostic)
+      - name: Make AnyKernel3 (path agnostic + self-diagnosing)
         run: |
           set -e
           git clone --depth=1 https://github.com/Numbersf/AnyKernel3 ./AnyKernel3
           rm -rf ./AnyKernel3/.git
 
-          echo "== where did the build put things? =="
-          find ./kernel_workspace -type f -name "Image*" 2>/dev/null | head -20
-          find ./kernel_workspace -type f -name "*.dtb" 2>/dev/null | head -5
+          mkdir -p diag
+          {
+            echo "== build tree: top level of kernel_workspace =="
+            ls -la kernel_workspace || true
+            echo
+            echo "== kernel_platform/out (first 60 entries) =="
+            ls -la kernel_workspace/kernel_platform/out 2>/dev/null | head -60 || echo "(no kernel_platform/out)"
+            echo
+            echo "== any dir named dist =="
+            find kernel_workspace -maxdepth 7 -type d -name dist 2>/dev/null | head -20
+            echo
+            echo "== files matching Image* (>1MB) anywhere in workspace =="
+            find . -type f -name "Image*" -size +1M 2>/dev/null | head -30
+            echo
+            echo "== files matching *.dtb >20k =="
+            find kernel_workspace -type f -name "*.dtb" -size +20k 2>/dev/null | head -20
+            echo
+            echo "== total files in kernel_platform/out =="
+            find kernel_workspace/kernel_platform/out -type f 2>/dev/null | wc -l
+          } > diag/build-layout.txt 2>&1
 
-          image_path=$(find ./kernel_workspace -type f -name "Image" -size +5M 2>/dev/null | head -n 1)
+          # push diagnostics so the result is readable without the run log
+          git config user.email "ci@local" && git config user.name "ci"
+          git add -f diag/build-layout.txt || true
+          git commit -m "ci: build layout diagnostics" || echo "nothing to commit"
+          git push origin HEAD:refs/heads/main || git push origin HEAD:main || echo "push failed (continue)"
+
+          echo "===== BUILD LAYOUT ====="
+          cat diag/build-layout.txt
+
+          image_path=$(find kernel_workspace -type f -name "Image" -size +2M 2>/dev/null | head -n 1)
           if [ -z "$image_path" ]; then
-            image_path=$(find ./kernel_workspace -type f -name "Image*" -size +5M 2>/dev/null | head -n 1)
+            image_path=$(find kernel_workspace -type f -name "Image*" -size +2M 2>/dev/null | head -n 1)
           fi
           if [ -z "$image_path" ]; then
-            echo "!! no kernel Image found in build output"
-            find ./kernel_workspace -maxdepth 6 -type d -name dist 2>/dev/null | head
+            echo "!! no kernel Image found (see diag/build-layout.txt in the repo)"
             exit 1
           fi
           echo "kernel image: $image_path ($(stat -c%s "$image_path") bytes)"
-          cp "$image_path" ./AnyKernel3/Image
-
-          dtb_path=$(find ./kernel_workspace -type f -name "*.dtb" -size +20k 2>/dev/null | head -n 1)
-          if [ -n "$dtb_path" ]; then
-            echo "dtb: $dtb_path"
-            cp "$dtb_path" ./AnyKernel3/dtb
-          else
-            echo "no standalone dtb found (kernel Image likely has dtb appended) - skipping"
-          fi
+          case "$image_path" in
+            *.gz) gunzip -c "$image_path" > ./AnyKernel3/Image ;;
+            *.lz4) lz4 -d -c "$image_path" > ./AnyKernel3/Image 2>/dev/null || cp "$image_path" ./AnyKernel3/Image ;;
+            *) cp "$image_path" ./AnyKernel3/Image ;;
+          esac
           ls -l ./AnyKernel3/
 
       - name: Apply patch_linux and replace Image
