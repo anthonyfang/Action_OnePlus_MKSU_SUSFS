@@ -82,7 +82,9 @@ jobs:
       - name: Add KernelSU-SukiSU Ultra
         run: |
           cd kernel_workspace/kernel_platform
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          # main 分支 = kprobe/kretprobe + sys_enter tracepoint 运行时挂钩，不需要手工往内核源码插 hook
+          # builtin 分支 = manual hooks，必须手工改 VFS 源码，本 workflow 并不会插那些 hook -> 编出来也挂不上
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           cd ./KernelSU
           KSU_VERSION=$(expr $(/usr/bin/git rev-list --count main) "+" 10606)
           echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
@@ -113,7 +115,10 @@ jobs:
           echo "CONFIG_KSU=y" >> "$CONFIG_FILE"
           echo "CONFIG_KPM=y" >> "$CONFIG_FILE"
 
-          # SUSFS config
+          # SUSFS 关闭：builtin 分支的 Kconfig 里 KSU_SUSFS 是 default y，
+          # 但内核没打 SUSFS 补丁 -> kernel_includes.h 会 include <linux/susfs.h> 而找不到，必须显式置 n
+          echo "# CONFIG_KSU_SUSFS is not set" >> "$CONFIG_FILE"
+          grep -n "KSU" "$CONFIG_FILE" | tail -5
 
           # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
